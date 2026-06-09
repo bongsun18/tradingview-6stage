@@ -1,0 +1,242 @@
+// ============================================================
+// 🤖 이동평균선 6스테이지 대순환 자동매매 전략 (Strategy)
+// 기반: 고지로 강사 이평선 투자법 + 다이버전스 10% 매도 규칙
+// Pine Script v5
+// ============================================================
+//@version=5
+strategy("6스테이지 대순환 전략", shorttitle="6Stage Strat", overlay=true,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     initial_capital=10000000, currency=currency.KRW,
+     commission_type=strategy.commission.percent, commission_value=0.05,
+     slippage=2)
+
+// ──────────────────────────────────────────────
+// 1. 입력값
+// ──────────────────────────────────────────────
+grp_ma    = "이동평균선"
+grp_ind   = "보조지표"
+grp_buy   = "매수 설정"
+grp_sell  = "매도 설정"
+grp_risk  = "리스크 관리"
+grp_poa   = "POA Bot 연동"
+
+// 이평선
+ma5_len   = input.int(5,    "단기 이평 (5일)", group=grp_ma)
+ma20_len  = input.int(20,   "중기 이평 (20일)", group=grp_ma)
+ma60_len  = input.int(60,   "장기 이평 (60일)", group=grp_ma)
+ma120_len = input.int(120,  "초장기 이평 (120일)", group=grp_ma)
+
+// 보조지표
+macd_fast    = input.int(12, "MACD Fast", group=grp_ind)
+macd_slow    = input.int(26, "MACD Slow", group=grp_ind)
+macd_signal  = input.int(9,  "MACD Signal", group=grp_ind)
+rsi_len      = input.int(14, "RSI 기간", group=grp_ind)
+div_lookback = input.int(20, "다이버전스 룩백", minval=5, group=grp_ind)
+
+// 매수
+buy_pct_s2   = input.int(50, "S2 진입 매수 (%)", minval=10, maxval=100, group=grp_buy, tooltip="제2스테이지 골든크로스 시 매수 비율")
+buy_pct_div  = input.int(30, "다이버전스 매수 (%)", minval=10, maxval=100, group=grp_buy, tooltip="상승 다이버전스 + 바닥권 시 추가 매수 비율")
+
+// 매도
+sell_div_pct = input.int(10, "다이버전스 매도 (%)", minval=5, maxval=50, group=grp_sell, tooltip="하락 다이버전스 발생 시 매도 비율")
+sell_dc_pct  = input.int(80, "데드크로스 매도 (%)", minval=50, maxval=100, group=grp_sell, tooltip="제5스테이지 데드크로스 시 매도 비율")
+
+// 리스크 관리
+use_stoploss   = input.bool(false, "손절매 사용", group=grp_risk)
+stoploss_pct   = input.float(5.0, "손절매 (%)", minval=1.0, maxval=20.0, group=grp_risk)
+use_trailing   = input.bool(false, "트레일링 스톱 사용", group=grp_risk)
+trail_pct      = input.float(3.0, "트레일링 (%)", minval=0.5, maxval=10.0, group=grp_risk)
+
+// POA Bot
+use_poa    = input.bool(false, "POA Bot Webhook 활성화", group=grp_poa)
+bot_name   = input.string("6StageBot", "Bot 이름", group=grp_poa)
+
+// ──────────────────────────────────────────────
+// 2. 이동평균선
+// ──────────────────────────────────────────────
+ma5   = ta.sma(close, ma5_len)
+ma20  = ta.sma(close, ma20_len)
+ma60  = ta.sma(close, ma60_len)
+ma120 = ta.sma(close, ma120_len)
+
+p5   = plot(ma5,   "MA5",   color=color.new(color.white, 30), linewidth=1)
+p20  = plot(ma20,  "MA20",  color=color.yellow, linewidth=2)
+p60  = plot(ma60,  "MA60",  color=color.blue,   linewidth=2)
+p120 = plot(ma120, "MA120", color=color.red,    linewidth=2)
+
+// ──────────────────────────────────────────────
+// 3. 배열 / 수렴 / 크로스
+// ──────────────────────────────────────────────
+bullish_align = ma5 > ma20 and ma20 > ma60 and ma60 > ma120
+bearish_align = ma5 < ma20 and ma20 < ma60 and ma60 < ma120
+
+spread     = (math.abs(ma5 - ma20) + math.abs(ma20 - ma60) + math.abs(ma60 - ma120)) / close
+avg_spread = ta.sma(spread, 60)
+converging = spread < avg_spread * 0.7
+
+gc_5_20  = ta.crossover(ma5, ma20)
+dc_5_20  = ta.crossunder(ma5, ma20)
+gc_20_60 = ta.crossover(ma20, ma60)
+dc_20_60 = ta.crossunder(ma20, ma60)
+
+// ──────────────────────────────────────────────
+// 4. MACD & RSI
+// ──────────────────────────────────────────────
+[macdLine, sigLine, histLine] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+rsi = ta.rsi(close, rsi_len)
+
+// ──────────────────────────────────────────────
+// 5. 다이버전스 감지
+// ──────────────────────────────────────────────
+hl = math.max(math.round(div_lookback / 2), 3)
+
+pHigh = ta.pivothigh(high, hl, hl)
+pLow  = ta.pivotlow(low, hl, hl)
+rHigh = ta.pivothigh(rsi, hl, hl)
+rLow  = ta.pivotlow(rsi, hl, hl)
+mHigh = ta.pivothigh(macdLine, hl, hl)
+mLow  = ta.pivotlow(macdLine, hl, hl)
+
+bearDivRSI  = not na(pHigh) and not na(rHigh[hl]) and pHigh > nz(pHigh[hl]) and nz(rHigh) < nz(rHigh[hl])
+bearDivMACD = not na(pHigh) and not na(mHigh[hl]) and pHigh > nz(pHigh[hl]) and nz(mHigh) < nz(mHigh[hl])
+bearDiv     = bearDivRSI or bearDivMACD
+bearDivStrong = bearDivRSI and bearDivMACD
+
+bullDivRSI  = not na(pLow) and not na(rLow[hl]) and pLow < nz(pLow[hl]) and nz(rLow) > nz(rLow[hl])
+bullDivMACD = not na(pLow) and not na(mLow[hl]) and pLow < nz(pLow[hl]) and nz(mLow) > nz(mLow[hl])
+bullDiv     = bullDivRSI or bullDivMACD
+bullDivStrong = bullDivRSI and bullDivMACD
+
+// ──────────────────────────────────────────────
+// 6. 6스테이지 판별
+// ──────────────────────────────────────────────
+var int stage = 0
+
+if bearish_align and converging
+    stage := 1
+else if gc_5_20 or gc_20_60
+    stage := 2
+else if dc_5_20 or dc_20_60
+    stage := 5
+else if bullish_align and not converging and not bearDiv
+    stage := 3
+else if bullish_align and (bearDiv or converging)
+    stage := 4
+else if bearish_align and not converging
+    stage := 6
+
+prevStage = nz(stage[1])
+
+// ──────────────────────────────────────────────
+// 7. 매매 로직
+// ──────────────────────────────────────────────
+inPos = strategy.position_size > 0
+
+// ── 매수 ──
+// A) 제2스테이지 진입 (골든크로스) → 주 매수
+if stage == 2 and prevStage != 2 and not inPos
+    strategy.entry("S2Long", strategy.long, qty_percent=buy_pct_s2, comment="S2 매수")
+
+// B) 상승 다이버전스 + 바닥권 → 추가 매수
+if bullDiv and stage <= 2 and not inPos
+    strategy.entry("DivLong", strategy.long, qty_percent=buy_pct_div, comment="DIV 매수")
+
+// ── 매도 ──
+// A) 하락 다이버전스 → 10% 매도 (사용자 규칙)
+// 강한 다이버전스면 20%, 약하면 10%
+divSellPct = bearDivStrong ? math.min(sell_div_pct * 2, 50) : sell_div_pct
+
+if bearDiv and inPos
+    strategy.close("S2Long",  qty_percent=divSellPct, comment="DIV " + str.tostring(divSellPct) + "% 매도")
+    strategy.close("DivLong", qty_percent=divSellPct, comment="DIV " + str.tostring(divSellPct) + "% 매도")
+
+// B) 제5스테이지 (데드크로스) → 대규모 매도
+if stage == 5 and prevStage != 5 and inPos
+    strategy.close("S2Long",  qty_percent=sell_dc_pct, comment="DC " + str.tostring(sell_dc_pct) + "% 매도")
+    strategy.close("DivLong", qty_percent=sell_dc_pct, comment="DC " + str.tostring(sell_dc_pct) + "% 매도")
+
+// C) 제6스테이지 (역배열) → 전량 매도
+if stage == 6 and prevStage != 6 and inPos
+    strategy.close_all(comment="전량 매도 (S6)")
+
+// ── 손절매 / 트레일링 ──
+if use_stoploss and inPos
+    strategy.exit("StopLoss", loss=strategy.position_avg_price * stoploss_pct / 100 / syminfo.mintick)
+
+if use_trailing and inPos
+    strategy.exit("Trailing", trail_price=ta.highest(high, 20) * (1 - trail_pct / 100), trail_offset=syminfo.mintick * 10)
+
+// ──────────────────────────────────────────────
+// 8. 시각화
+// ──────────────────────────────────────────────
+// 스테이지 배경색
+sColor = stage == 1 ? color.new(color.purple, 85) :
+         stage == 2 ? color.new(color.green, 85)  :
+         stage == 3 ? color.new(color.lime, 90)   :
+         stage == 4 ? color.new(color.orange, 85)  :
+         stage == 5 ? color.new(color.red, 85)     :
+         stage == 6 ? color.new(color.maroon, 85)  :
+         color.new(color.gray, 95)
+bgcolor(sColor, title="스테이지 배경")
+
+// 매수 마크
+plotshape(stage == 2 and prevStage != 2 and not nz(inPos[1]), title="매수: S2",       style=shape.labelup, location=location.belowbar, color=color.green, size=size.small, text="🟢 S2 매수")
+plotshape(bullDiv and stage <= 2 and not nz(inPos[1]),        title="매수: 다이버전스", style=shape.labelup, location=location.belowbar, color=color.aqua,  size=size.small, text="📈 DIV 매수")
+
+// 매도 마크 (라벨)
+if bearDiv and inPos
+    lbl = bearDivStrong ? "🔴 강DIV " + str.tostring(divSellPct) + "%" : "🟠 DIV " + str.tostring(divSellPct) + "%"
+    lblColor = bearDivStrong ? color.red : color.orange
+    label.new(bar_index, high, lbl, style=label.style_label_down, color=lblColor, textcolor=color.white, size=size.tiny)
+
+if stage == 5 and prevStage != 5 and inPos
+    label.new(bar_index, high, "🔴 DC " + str.tostring(sell_dc_pct) + "%", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+
+if stage == 6 and prevStage != 6 and inPos
+    label.new(bar_index, high, "⬛ 전량 매도", style=label.style_label_down, color=color.maroon, textcolor=color.white, size=size.tiny)
+
+// 스테이지 전환 라벨
+if stage != prevStage
+    sText = stage == 1 ? "🟣S1" : stage == 2 ? "🟢S2" : stage == 3 ? "🟩S3" : stage == 4 ? "🟠S4" : stage == 5 ? "🔴S5" : "⬛S6"
+    label.new(bar_index, high * 1.002, sText, style=label.style_label_down, color=sColor, textcolor=color.white, size=size.tiny)
+
+// ──────────────────────────────────────────────
+// 9. POA Bot Webhook 알림 (JSON)
+// ──────────────────────────────────────────────
+// 트레이딩뷰 Alert 설정 → Webhook URL 입력 → POA Bot 서버가 수신
+// POA Bot은 이 JSON을 파싱해서 증권사 API로 주문 실행
+
+buyS2Msg   = '{"bot":"' + bot_name + '","action":"BUY","reason":"STAGE2","ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.exchange + '","price":' + str.tostring(close) + ',"stage":' + str.tostring(stage) + ',"qty_pct":' + str.tostring(buy_pct_s2) + ',"ts":"' + str.tostring(timenow) + '"}'
+buyDivMsg  = '{"bot":"' + bot_name + '","action":"BUY","reason":"BULL_DIV","ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.exchange + '","price":' + str.tostring(close) + ',"stage":' + str.tostring(stage) + ',"qty_pct":' + str.tostring(buy_pct_div) + ',"ts":"' + str.tostring(timenow) + '"}'
+sellDivMsg = '{"bot":"' + bot_name + '","action":"SELL","reason":"BEAR_DIV","strength":"' + str.tostring(bearDivStrong) + '","ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.exchange + '","price":' + str.tostring(close) + ',"stage":' + str.tostring(stage) + ',"qty_pct":' + str.tostring(divSellPct) + ',"ts":"' + str.tostring(timenow) + '"}'
+sellDCMsg  = '{"bot":"' + bot_name + '","action":"SELL","reason":"DEAD_CROSS","ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.exchange + '","price":' + str.tostring(close) + ',"stage":' + str.tostring(stage) + ',"qty_pct":' + str.tostring(sell_dc_pct) + ',"ts":"' + str.tostring(timenow) + '"}'
+sellAllMsg = '{"bot":"' + bot_name + '","action":"SELL","reason":"FULL_SELL","ticker":"' + syminfo.ticker + '","exchange":"' + syminfo.exchange + '","price":' + str.tostring(close) + ',"stage":' + str.tostring(stage) + ',"qty_pct":100,"ts":"' + str.tostring(timenow) + '"}'
+
+alertcondition(stage == 2 and prevStage != 2, title="POA: BUY_S2",       message=buyS2Msg)
+alertcondition(bullDiv and stage <= 2,        title="POA: BUY_DIV",      message=buyDivMsg)
+alertcondition(bearDiv,                       title="POA: SELL_DIV",     message=sellDivMsg)
+alertcondition(stage == 5 and prevStage != 5, title="POA: SELL_DC",      message=sellDCMsg)
+alertcondition(stage == 6 and prevStage != 6, title="POA: SELL_FULL",    message=sellAllMsg)
+
+// ──────────────────────────────────────────────
+// 10. 전략 성과 표시 (우측 상단)
+// ──────────────────────────────────────────────
+var table perf = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 20), border_width=1)
+
+if barstate.islast
+    netProfit = strategy.netprofit
+    winRate = strategy.wintrades > 0 ? strategy.wintrades / (strategy.wintrades + strategy.losstrades) * 100 : 0
+    sLabel = stage == 1 ? "🟣 바닥" : stage == 2 ? "🟢 상승" : stage == 3 ? "🟩 추세" : stage == 4 ? "🟠 천정" : stage == 5 ? "🔴 하락" : "⬛ 약세"
+
+    table.cell(perf, 0, 0, "📊 6Stage 전략", text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
+    table.merge_cells(perf, 0, 0, 1, 0)
+    table.cell(perf, 0, 1, "현재 스테이지", text_color=color.white, text_size=size.small)
+    table.cell(perf, 1, 1, sLabel, text_color=color.yellow, text_size=size.small)
+    table.cell(perf, 0, 2, "총 수익률",    text_color=color.white, text_size=size.small)
+    table.cell(perf, 1, 2, str.tostring(netProfit / strategy.initial_capital * 100, "#.0") + "%", text_color=netProfit > 0 ? color.green : color.red, text_size=size.small)
+    table.cell(perf, 0, 3, "승률",         text_color=color.white, text_size=size.small)
+    table.cell(perf, 1, 3, str.tostring(winRate, "#.0") + "%", text_color=winRate > 50 ? color.green : color.orange, text_size=size.small)
+    table.cell(perf, 0, 4, "총 거래",      text_color=color.white, text_size=size.small)
+    table.cell(perf, 1, 4, str.tostring(strategy.closedtrades), text_color=color.white, text_size=size.small)
+    table.cell(perf, 0, 5, "포지션",       text_color=color.white, text_size=size.small)
+    table.cell(perf, 1, 5, inPos ? "🟢 보유중" : "⚪ 현금", text_color=inPos ? color.green : color.gray, text_size=size.small)

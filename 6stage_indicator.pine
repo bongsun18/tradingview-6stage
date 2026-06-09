@@ -1,0 +1,206 @@
+// ============================================================
+// 📊 이동평균선 6스테이지 대순환 지표 (Indicator)
+// 기반: 고지로 강사 이평선 투자법
+// Pine Script v5
+// ============================================================
+//@version=5
+indicator("6스테이지 대순환 지표", shorttitle="6Stage", overlay=true, max_labels_count=500)
+
+// ──────────────────────────────────────────────
+// 1. 입력값
+// ──────────────────────────────────────────────
+grp_ma  = "이동평균선"
+grp_ind = "보조지표"
+grp_vis = "시각화"
+
+ma5_len   = input.int(5,    "단기 이평 (5일)", group=grp_ma)
+ma20_len  = input.int(20,   "중기 이평 (20일)", group=grp_ma)
+ma60_len  = input.int(60,   "장기 이평 (60일)", group=grp_ma)
+ma120_len = input.int(120,  "초장기 이평 (120일)", group=grp_ma)
+
+macd_fast    = input.int(12, "MACD Fast", group=grp_ind)
+macd_slow    = input.int(26, "MACD Slow", group=grp_ind)
+macd_signal  = input.int(9,  "MACD Signal", group=grp_ind)
+rsi_len      = input.int(14, "RSI 기간", group=grp_ind)
+div_lookback = input.int(20, "다이버전스 룩백", minval=5, group=grp_ind)
+
+show_bg    = input.bool(true, "스테이지 배경색", group=grp_vis)
+show_div   = input.bool(true, "다이버전스 마크", group=grp_vis)
+show_cross = input.bool(true, "골든/데드크로스", group=grp_vis)
+show_table = input.bool(true, "정보 테이블", group=grp_vis)
+
+// ──────────────────────────────────────────────
+// 2. 이동평균선
+// ──────────────────────────────────────────────
+ma5   = ta.sma(close, ma5_len)
+ma20  = ta.sma(close, ma20_len)
+ma60  = ta.sma(close, ma60_len)
+ma120 = ta.sma(close, ma120_len)
+
+p5   = plot(ma5,   "MA5",   color=color.new(color.white, 30),  linewidth=1)
+p20  = plot(ma20,  "MA20",  color=color.new(color.yellow, 0),  linewidth=2)
+p60  = plot(ma60,  "MA60",  color=color.new(color.blue, 0),    linewidth=2)
+p120 = plot(ma120, "MA120", color=color.new(color.red, 0),     linewidth=2)
+
+// 정배열 시 녹색 채우기, 역배열 시 빨간 채우기
+bullish_align = ma5 > ma20 and ma20 > ma60 and ma60 > ma120
+bearish_align = ma5 < ma20 and ma20 < ma60 and ma60 < ma120
+
+fill(p5, p120, title="정배열 영역", color=bullish_align ? color.new(color.green, 92) : na)
+fill(p5, p120, title="역배열 영역", color=bearish_align ? color.new(color.red, 92) : na)
+
+// ──────────────────────────────────────────────
+// 3. 수렴 판단
+// ──────────────────────────────────────────────
+// 이평선 사이 거리의 합을 가격 대비 비율로 계산
+spread     = (math.abs(ma5 - ma20) + math.abs(ma20 - ma60) + math.abs(ma60 - ma120)) / close
+avg_spread = ta.sma(spread, 60)
+converging = spread < avg_spread * 0.7
+
+// 이격도 (20일선 기준)
+deviation = (close - ma20) / ma20 * 100
+
+// ──────────────────────────────────────────────
+// 4. 골든/데드크로스
+// ──────────────────────────────────────────────
+gc_5_20  = ta.crossover(ma5, ma20)
+dc_5_20  = ta.crossunder(ma5, ma20)
+gc_20_60 = ta.crossover(ma20, ma60)
+dc_20_60 = ta.crossunder(ma20, ma60)
+gc_60_120 = ta.crossover(ma60, ma120)
+dc_60_120 = ta.crossunder(ma60, ma120)
+
+// ──────────────────────────────────────────────
+// 5. MACD & RSI
+// ──────────────────────────────────────────────
+[macdLine, sigLine, histLine] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+rsi = ta.rsi(close, rsi_len)
+
+// MACD 히스토그램 방향 전환
+hist_rising  = histLine > nz(histLine[1])
+hist_falling = histLine < nz(histLine[1])
+
+// ──────────────────────────────────────────────
+// 6. 다이버전스 감지
+// ──────────────────────────────────────────────
+hl = math.max(math.round(div_lookback / 2), 3)
+
+pHigh = ta.pivothigh(high, hl, hl)
+pLow  = ta.pivotlow(low, hl, hl)
+rHigh = ta.pivothigh(rsi, hl, hl)
+rLow  = ta.pivotlow(rsi, hl, hl)
+mHigh = ta.pivothigh(macdLine, hl, hl)
+mLow  = ta.pivotlow(macdLine, hl, hl)
+
+// 하락 다이버전스: 가격 고점 ↑ + 지표 고점 ↓
+bearDivRSI  = not na(pHigh) and not na(rHigh[hl]) and pHigh > nz(pHigh[hl]) and nz(rHigh) < nz(rHigh[hl])
+bearDivMACD = not na(pHigh) and not na(mHigh[hl]) and pHigh > nz(pHigh[hl]) and nz(mHigh) < nz(mHigh[hl])
+bearDiv     = bearDivRSI or bearDivMACD
+
+// 상승 다이버전스: 가격 저점 ↓ + 지표 저점 ↑
+bullDivRSI  = not na(pLow) and not na(rLow[hl]) and pLow < nz(pLow[hl]) and nz(rLow) > nz(rLow[hl])
+bullDivMACD = not na(pLow) and not na(mLow[hl]) and pLow < nz(pLow[hl]) and nz(mLow) > nz(mLow[hl])
+bullDiv     = bullDivRSI or bullDivMACD
+
+// 다이버전스 강도 (RSI+MACD 동시 = 강함)
+bearDivStrong = bearDivRSI and bearDivMACD
+bullDivStrong = bullDivRSI and bullDivMACD
+
+// ──────────────────────────────────────────────
+// 7. 6스테이지 판별
+// ──────────────────────────────────────────────
+var int stage = 0
+
+if bearish_align and converging
+    stage := 1
+else if gc_5_20 or gc_20_60
+    stage := 2
+else if dc_5_20 or dc_20_60
+    stage := 5
+else if bullish_align and not converging and not bearDiv
+    stage := 3
+else if bullish_align and (bearDiv or converging)
+    stage := 4
+else if bearish_align and not converging
+    stage := 6
+
+prevStage = nz(stage[1])
+
+// ──────────────────────────────────────────────
+// 8. 시각화
+// ──────────────────────────────────────────────
+// 스테이지 배경색
+sColor = stage == 1 ? color.new(color.purple, 85) :
+         stage == 2 ? color.new(color.green, 85)  :
+         stage == 3 ? color.new(color.lime, 90)   :
+         stage == 4 ? color.new(color.orange, 85)  :
+         stage == 5 ? color.new(color.red, 85)     :
+         stage == 6 ? color.new(color.maroon, 85)  :
+         color.new(color.gray, 95)
+bgcolor(show_bg ? sColor : na, title="스테이지 배경")
+
+// 스테이지 라벨 (변경 시에만)
+if stage != prevStage
+    sText = stage == 1 ? "🟣 S1 바닥권" : stage == 2 ? "🟢 S2 상승초기" : stage == 3 ? "🟩 S3 상승추세" : stage == 4 ? "🟠 S4 천정권" : stage == 5 ? "🔴 S5 하락초기" : "⬛ S6 하락추세"
+    sTextColor = stage == 1 ? color.purple : stage == 2 ? color.green : stage == 3 ? color.lime : stage == 4 ? color.orange : stage == 5 ? color.red : color.maroon
+    label.new(bar_index, high, sText, style=label.style_label_down, color=sTextColor, textcolor=color.white, size=size.small)
+
+// 크로스 마크
+if show_cross
+    plotshape(gc_5_20,  title="GC 5/20",  style=shape.triangleup,   location=location.belowbar, color=color.green,  size=size.small, text="GC")
+    plotshape(dc_5_20,  title="DC 5/20",  style=shape.triangledown, location=location.abovebar, color=color.red,    size=size.small, text="DC")
+    plotshape(gc_20_60, title="GC 20/60", style=shape.triangleup,   location=location.belowbar, color=color.lime,   size=size.tiny,  text="GC★")
+    plotshape(dc_20_60, title="DC 20/60", style=shape.triangledown, location=location.abovebar, color=color.maroon, size=size.tiny,  text="DC★")
+
+// 다이버전스 마크 (강도에 따라 사이즈 차등)
+if show_div
+    plotshape(bearDiv, title="하락DIV", style=shape.triangledown, location=location.abovebar, color=bearDivStrong ? color.red : color.orange, size=bearDivStrong ? size.normal : size.small, text=bearDivStrong ? "⚠️ 강DIV" : "⚠️DIV")
+    plotshape(bullDiv, title="상승DIV", style=shape.triangleup,   location=location.belowbar, color=bullDivStrong ? color.lime : color.aqua,   size=bullDivStrong ? size.normal : size.small, text=bullDivStrong ? "📈 강DIV" : "📈DIV")
+
+// ──────────────────────────────────────────────
+// 9. 정보 테이블 (우측 상단)
+// ──────────────────────────────────────────────
+if show_table
+    var table t = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 20), border_width=1, border_color=color.new(color.gray, 50))
+
+    if barstate.islast
+        sLabel = stage == 1 ? "🟣 바닥권" : stage == 2 ? "🟢 상승초기" : stage == 3 ? "🟩 상승추세" : stage == 4 ? "🟠 천정권" : stage == 5 ? "🔴 하락초기" : "⬛ 하락추세"
+        divStatus = bearDivStrong ? "🔴 강한 하락" : bearDiv ? "🟠 하락" : bullDivStrong ? "🟢 강한 상승" : bullDiv ? "🔵 상승" : "— 없음"
+        
+        // 헤더
+        table.cell(t, 0, 0, "📊 6Stage 대순환", text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.gray, 70))
+        table.merge_cells(t, 0, 0, 1, 0)
+        
+        table.cell(t, 0, 1, "스테이지",    text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 1, sLabel,         text_color=color.yellow, text_size=size.small)
+        table.cell(t, 0, 2, "정배열",      text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 2, str.tostring(bullish_align), text_color=bullish_align ? color.green : color.gray, text_size=size.small)
+        table.cell(t, 0, 3, "역배열",      text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 3, str.tostring(bearish_align), text_color=bearish_align ? color.red : color.gray, text_size=size.small)
+        table.cell(t, 0, 4, "RSI",         text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 4, str.tostring(rsi, "#.0"), text_color=rsi > 70 ? color.red : rsi < 30 ? color.green : color.white, text_size=size.small)
+        table.cell(t, 0, 5, "MACD Hist",   text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 5, str.tostring(histLine, "#.000"), text_color=histLine > 0 ? color.green : color.red, text_size=size.small)
+        table.cell(t, 0, 6, "이격도(%)",   text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 6, str.tostring(deviation, "#.0") + "%", text_color=math.abs(deviation) > 5 ? color.orange : color.white, text_size=size.small)
+        table.cell(t, 0, 7, "다이버전스",  text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 7, divStatus,      text_color=bearDiv ? color.orange : bullDiv ? color.aqua : color.gray, text_size=size.small)
+        table.cell(t, 0, 8, "수렴",        text_color=color.white, text_size=size.small)
+        table.cell(t, 1, 8, str.tostring(converging), text_color=converging ? color.yellow : color.gray, text_size=size.small)
+        table.cell(t, 0, 9, "추세",        text_color=color.white, text_size=size.small)
+        trendStatus = bullish_align ? "▲ 상승" : bearish_align ? "▼ 하락" : "◆ 횡보"
+        table.cell(t, 1, 9, trendStatus,    text_color=bullish_align ? color.green : bearish_align ? color.red : color.yellow, text_size=size.small)
+
+// ──────────────────────────────────────────────
+// 10. 알림 조건
+// ──────────────────────────────────────────────
+alertcondition(stage == 2 and prevStage != 2, title="S2 진입 (상승초기)",  message="🟢 제2스테이지 진입 — 골든크로스 발생! 매수 타이밍")
+alertcondition(stage == 3 and prevStage != 3, title="S3 진입 (상승추세)",  message="🟩 제3스테이지 — 정배열 완성! 보유 유지")
+alertcondition(stage == 4 and prevStage != 4, title="S4 진입 (천정권)",    message="🟠 제4스테이지 — 천정권! 다이버전스 감지, 10% 매도 검토")
+alertcondition(stage == 5 and prevStage != 5, title="S5 진입 (하락초기)",  message="🔴 제5스테이지 — 데드크로스 발생! 80% 매도")
+alertcondition(stage == 6 and prevStage != 6, title="S6 진입 (하락추세)",  message="⬛ 제6스테이지 — 역배열! 전량 매도 완료")
+alertcondition(bearDiv,                       title="하락 다이버전스",     message="⚠️ 하락 다이버전스 감지 — 10% 매도 검토")
+alertcondition(bearDivStrong,                 title="강한 하락 다이버전스", message="🔴 RSI+MACD 동시 하락 다이버전스! 즉시 매도 검토")
+alertcondition(bullDiv,                       title="상승 다이버전스",     message="📈 상승 다이버전스 감지 — 매수 검토")
+alertcondition(gc_20_60,                      title="골든크로스 20/60",   message="✅ 20일/60일 골든크로스 — 중요 매수 신호")
+alertcondition(dc_20_60,                      title="데드크로스 20/60",   message="❌ 20일/60일 데드크로스 — 중요 매도 신호")
