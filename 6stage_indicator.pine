@@ -151,9 +151,15 @@ plotshape(show_cross and dc_5_20,  title="DC 5/20",  style=shape.triangledown, l
 plotshape(show_cross and gc_20_60, title="GC 20/60", style=shape.triangleup,   location=location.belowbar, color=color.lime,   size=size.tiny,  text="GC★")
 plotshape(show_cross and dc_20_60, title="DC 20/60", style=shape.triangledown, location=location.abovebar, color=color.maroon, size=size.tiny,  text="DC★")
 
-// 다이버전스 마크 (강도에 따라 사이즈 차등)
-plotshape(show_div and bearDiv, title="하락DIV", style=shape.triangledown, location=location.abovebar, color=bearDivStrong ? color.red : color.orange, size=bearDivStrong ? size.normal : size.small, text=bearDivStrong ? "⚠️ 강DIV" : "⚠️DIV")
-plotshape(show_div and bullDiv, title="상승DIV", style=shape.triangleup,   location=location.belowbar, color=bullDivStrong ? color.lime : color.aqua,   size=bullDivStrong ? size.normal : size.small, text=bullDivStrong ? "📈 강DIV" : "📈DIV")
+// 다이버전스 마크 (강도에 따라 분리 — size/text는 const만 가능)
+// 하락 다이버전스 — 강함 (RSI+MACD 동시)
+plotshape(show_div and bearDivStrong, title="강한 하락DIV", style=shape.triangledown, location=location.abovebar, color=color.red,    size=size.normal, text="⚠️ 강DIV")
+// 하락 다이버전스 — 약함 (단일 지표)
+plotshape(show_div and bearDiv and not bearDivStrong, title="하락DIV", style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small,  text="⚠️ DIV")
+// 상승 다이버전스 — 강함
+plotshape(show_div and bullDivStrong, title="강한 상승DIV", style=shape.triangleup,   location=location.belowbar, color=color.lime,   size=size.normal, text="📈 강DIV")
+// 상승 다이버전스 — 약함
+plotshape(show_div and bullDiv and not bullDivStrong, title="상승DIV", style=shape.triangleup,   location=location.belowbar, color=color.aqua,   size=size.small,  text="📈 DIV")
 
 // ──────────────────────────────────────────────
 // 9. 정보 테이블 (우측 상단)
